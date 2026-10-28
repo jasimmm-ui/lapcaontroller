@@ -1,72 +1,70 @@
 # Liquid Glass Remote
 
-A React PWA and Windows 11 receiver for controlling your laptop from an Android phone on the same private Wi-Fi. The receiver starts in **mock mode**: it accepts commands but never touches the mouse, keyboard, media keys, or apps. Real input requires an explicit `MOCK_MODE=false` setting.
+Control a paired Windows 11 laptop from the existing Android-friendly website, including when the phone and laptop are on different networks.
 
-## Requirements
+The frontend stays on Vercel. A separate HTTPS relay authenticates devices and forwards approved commands. The Windows receiver makes an outbound connection, so the laptop needs no public listening port, manually installed phone certificate, inbound firewall rule, or port forwarding. The receiver and phone reconnect their WebSocket heartbeat connections automatically.
 
-- Windows 11, Node.js 20 or newer, and npm.
-- Android phone and laptop on the same trusted private Wi-Fi for live LAN use.
-- For live LAN use: a trusted HTTPS certificate with the laptop's LAN IP in its Subject Alternative Name, trusted by the phone.
+## Normal use
 
-## Install and preview
+1. Install the Windows receiver and leave its sign-in startup option enabled.
+2. Open the receiver. It shows a three-digit, two-minute pairing code.
+3. Enter the code on the phone website.
+4. Approve the phone in the receiver window.
+5. Select the saved laptop on the phone in future sessions. The receiver starts again when the Windows user signs in and reconnects without pairing again.
 
-In PowerShell, open this folder and run:
+The laptop must be powered on, signed in, awake, and online. The pairing code only starts a request; the laptop user must approve the phone. Paired phones can be removed in the website or revoked in the receiver window.
+
+## Project parts
+
+- `src/` - React/Vite interface. Existing touchpad, keyboard, media, volume, and built-in app controls are retained.
+- `relay/` - HTTPS Express relay, SQLite storage, WebSocket heartbeat endpoints, code exchange, presence, and bounded command forwarding.
+- `receiver/` - Outbound relay client, Windows DPAPI identity storage, console approval/status, WebSocket heartbeat, and crash-restarting launcher.
+- `server/windows.js` and `server/validation.js` - Same-user-session Windows input worker and the shared strict action allowlist.
+- `installer/` and `scripts/package-windows.ps1` - Per-user Inno Setup installer staging and build configuration.
+- [Beginner installation and deployment guide](docs/SETUP-AND-DEPLOYMENT.md).
+
+## Local development
+
+Requires Node.js 22.13 or newer. On a fresh checkout, copy `.env.example` to `.env`. If `.env` already exists, add the new settings to it without overwriting existing machine-specific values. Set a private `RELAY_PEPPER` with at least 32 random bytes, keep `MOCK_MODE=true`, and use `RELAY_URL=http://127.0.0.1:8788` for local development.
 
 ```powershell
 npm install
 npm run dev:all
 ```
 
-The receiver listens only on `127.0.0.1:8787` by default and prints a ten-digit, one-use code that expires after ten minutes. The Vite interface listens on `127.0.0.1:5173`; open that address on the laptop. In this default loopback mode, phone pairing is not available. `?mock=true` shows the preview UI, and no commands are sent unless a phone is paired with a receiver.
+In a second PowerShell window in the project folder:
 
-To run unit tests and build the production UI:
+```powershell
+npm run dev:receiver
+```
+
+The receiver prints a code and waits for explicit approval. In development it stays in preview mode and does not send real Windows input. The relay creates its local database under `relay/data/`.
+
+## Build and test
 
 ```powershell
 npm test
 npm run build
 ```
 
-## Secure LAN setup
+The automated tests cover code expiry and reuse, attempt limits, explicit approval, command allowlisting, receiver and phone authentication, reconnect behavior, relay database persistence, phone revocation, receiver credential protection, and website-origin checks.
 
-The LAN receiver requires HTTPS. Do not expose plain HTTP to Wi-Fi clients. It does not change Windows network profiles, open router ports, install a Windows service, or start automatically. If Windows Firewall blocks the phone, an administrator can run `scripts/enable-firewall.ps1`; it creates one rule for `node.exe`, TCP 8787, this laptop address, and the configured Wi-Fi subnet only.
+## Production setup
 
-1. Choose a private IPv4 address for the laptop (for example, `192.168.1.25`) and your Wi-Fi subnet (for example, `192.168.1.0/24`). Reserve the address in your router if it supports DHCP reservations.
-2. Copy `.env.example` to `.env`. Set `REMOTE_HOST` to the laptop's private IPv4 address and `ALLOWED_CIDR` to its Wi-Fi subnet. For example, use `192.168.1.25` and `192.168.1.0/24` only if those match your network.
-3. Create a trusted local certificate with an IP Subject Alternative Name. For example, use [mkcert](https://github.com/FiloSottile/mkcert): run `mkcert -install`, create a certificate for the laptop IP, and place the certificate and key under `certs/`. Set `TLS_CERT` and `TLS_KEY` in `.env` to those files. Transfer only mkcert's public `rootCA.pem` to Android (rename it to `.crt` if Android requires that); never transfer `rootCA-key.pem`.
-4. Verify the root certificate fingerprint before installing it as a CA certificate in Android's Security settings; labels vary by manufacturer. This adds a user CA trust anchor on that phone. Remove it from Android settings when you stop using this remote.
-5. Run `npm run build`, then `npm start`. Keep `MOCK_MODE=true` while checking the UI; set it to `false` only when ready for real input. Open `https://<laptop-ip>:8787` on the phone and enter the temporary code shown in the receiver window.
-6. If Windows Firewall blocks the phone, open PowerShell as Administrator and run `& '<project-folder>\scripts\enable-firewall.ps1'`. The helper reads `REMOTE_HOST` and `ALLOWED_CIDR` from `.env` and limits the rule to that subnet; it does not change the network profile.
-7. Press Ctrl+C in the receiver window to stop. Sessions and the one-time code are cleared when the process stops.
+Deploy the relay as a single always-on Node container with a persistent disk mounted at `/data`, terminate public HTTPS at a trusted host/reverse proxy, set the Vercel `VITE_RELAY_URL`, then build the Windows installer with that relay URL. See the deployment guide for exact environment variables and commands.
 
-Use a narrow `ALLOWED_CIDR` and avoid guest Wi-Fi and networks you do not control. Browser origins and Host headers must match the configured laptop address, preventing arbitrary-origin requests and DNS rebinding. The session token lives only in the browser tab's `sessionStorage`, expires after eight hours, and is discarded when the receiver is restarted or the user disconnects. The certificate files, `.env`, and local firewall configuration are machine-specific and excluded from Git.
+The repository includes `render.yaml` for a Render **Free** web service with platform HTTPS. This is ₹0 within Render's quotas, but its SQLite path is ephemeral: Render can erase the database when the free service sleeps, restarts, or redeploys. Existing phone pairings then need to be created again. Render Free can also cold-start in about a minute, restart during maintenance, and suspend free services when the workspace's 750 monthly free instance-hours are exhausted. The heartbeat is intended to keep the service awake while the receiver is connected; it cannot guarantee uptime when the laptop or network is offline. Render Free therefore does not meet the durable, always-available pairing requirement by itself. The exact free-tier limits and the durable-storage alternatives are documented in [the setup guide](docs/SETUP-AND-DEPLOYMENT.md).
 
-## Android PWA
+## Security notes
 
-Open the receiver's HTTPS URL in Chrome on Android, pair, then use **Add to Home screen** from the browser menu. Static UI files only are eligible for service-worker caching; `/api/` endpoints are never cached. Offline use cannot control the laptop. Reconnect by reloading the page and pairing again after a receiver restart.
+- The three-digit code expires after two minutes and is single-use. A laptop user must approve each phone.
+- Relay-side receiver, phone, and code credentials are stored as keyed hashes. The relay pepper must stay secret and stable across deploys.
+- Windows receiver identity is protected with the current Windows user's DPAPI. The phone stores its device token encrypted with Web Crypto in IndexedDB.
+- Relay and receiver both validate a closed command schema. No shell, PowerShell, arbitrary app launch, screen streaming, microphone, camera, or file transfer is exposed.
+- The receiver runs in the signed-in user's session rather than Windows Session 0, so mouse and keyboard actions can reach that user's desktop.
+- Sending typed text uses the Windows clipboard and replaces its current contents; the phone app does not save the typed text.
+- `server/index.js` remains available as the previous direct-Wi-Fi receiver under `npm run start:legacy`. That legacy mode still requires its previous certificate and firewall setup; the new installer uses the relay receiver instead.
 
-### Using a separately hosted Vercel UI
+## Current deployment state
 
-The Vercel deployment serves only the React interface; the authenticated Windows receiver still runs on the laptop. In the phone UI, enter `https://<laptop-ip>:8787` as the receiver URL. Add the exact Vercel origin (for example, `https://your-project.vercel.app`) to `ALLOWED_ORIGINS` in the laptop's `.env`, then restart the receiver. The receiver grants CORS only to the configured origin, never to `*`. Chrome may ask the Vercel site for Local Network Access permission before it can contact the laptop; allow it only for your own deployment. The phone must also trust the receiver's HTTPS certificate.
-
-## Features and limits
-
-- Touchpad movement, tap/double-tap, right click, and two-finger scroll; browser gestures are suppressed only inside the touch surface.
-- Text insertion uses the Windows clipboard and Ctrl+V, so clipboard contents are replaced. The app does not keep typed text. Mobile keyboards may not send physical function keys, key combinations, or some Unicode sequences consistently.
-- Enter, Backspace, Tab, Escape, arrows, Ctrl+C, Ctrl+V, Alt+Tab, and Win+D are supported.
-- Media keys and volume up/down/mute are sent as Windows system key events. Precise volume slider and media-session metadata are not implemented.
-- Notepad, Calculator, and File Explorer are the only launch targets. Windows resolves these built-in app names; no received shell command is ever executed.
-- Laptop name is shown. Battery level and active media status are not currently available.
-- `MOCK_MODE=true` is the default and can be used with a paired phone to exercise validated commands without real system input. The UI also has an unpaired preview state.
-
-## Troubleshooting
-
-- **Cannot connect:** confirm both devices use the same Wi-Fi, `REMOTE_HOST` is the laptop's current IPv4, the receiver is running, and Windows Firewall has a rule for TCP 8787 limited to the configured address and subnet.
-- **TLS warning:** make sure the certificate has the exact IP in its SAN and its CA is trusted by Android. Do not proceed through an unknown or unexpected certificate warning.
-- **Pairing fails:** use the newest code in the receiver console before its ten-minute expiry. Pairing is limited to five attempts per client per minute; wait a minute after repeated failures.
-- **App reports receiver errors:** confirm the receiver console is open and inspect its diagnostic message. On non-Windows systems, leave mock mode enabled.
-- **Receiver says address unavailable:** update the laptop's IP after a DHCP change and restart the server.
-- **Controls seem delayed:** browser touch events are sent over Wi-Fi; cursor movement uses relative pointer deltas and may need sensitivity adjustment.
-
-## Security model
-
-HTTP is used only for loopback development. Production LAN mode refuses to start unless bound to a private IPv4 address, a configured subnet, and TLS certificate material (PFX or PEM). TLS protects pairing and commands in transit; network isolation, a trusted phone, a narrow subnet rule, and safe certificate handling are still required. There is no public discovery, arbitrary command execution, administrator elevation, automatic startup, or UAC bypass.
+The code in this workspace has not yet been deployed to Render or Vercel. The website needs `VITE_RELAY_URL` set in Vercel and a redeploy before it can connect. Build the Windows installer with the open-source Inno Setup 6 compiler; the installer is unsigned and may show an unknown-publisher warning.

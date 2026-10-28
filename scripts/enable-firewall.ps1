@@ -13,6 +13,14 @@ $subnet = $settings.ALLOWED_CIDR
 $parsedIp = $null
 if (-not [System.Net.IPAddress]::TryParse($localIp, [ref]$parsedIp) -or $parsedIp.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) { throw 'REMOTE_HOST must be an IPv4 address.' }
 if ($subnet -notmatch '^\d{1,3}(\.\d{1,3}){3}/(\d|[12]\d|3[0-2])$') { throw 'ALLOWED_CIDR must be an IPv4 subnet such as 192.168.1.0/24.' }
+$subnetParts = $subnet.Split('/')
+$prefixLength = [int]$subnetParts[1]
+$maskBytes = [byte[]]::new(4)
+for ($i = 0; $i -lt 4; $i++) {
+    $bitsInOctet = [Math]::Max(0, [Math]::Min(8, $prefixLength - (8 * $i)))
+    $maskBytes[$i] = [byte](256 - [Math]::Pow(2, 8 - $bitsInOctet))
+}
+$subnetWithMask = "$($subnetParts[0])/$([System.Net.IPAddress]::new($maskBytes).ToString())"
 $programPath = (Get-Command node.exe -ErrorAction Stop).Source
 $ruleName = 'LiquidGlassRemoteLAN8787'
 $displayName = "Liquid Glass Remote Wi-Fi $subnet"
@@ -37,7 +45,7 @@ $ports = $rule | Get-NetFirewallPortFilter
 $program = $rule | Get-NetFirewallApplicationFilter
 if ($rule.Direction -ne 'Inbound' -or $rule.Action -ne 'Allow' -or
     $addresses.LocalAddress -notcontains $localIp -or
-    $addresses.RemoteAddress -notcontains $subnet -or
+    ($addresses.RemoteAddress -notcontains $subnet -and $addresses.RemoteAddress -notcontains $subnetWithMask) -or
     $ports.Protocol -ne 'TCP' -or $ports.LocalPort -ne '8787' -or
     $program.Program -ne $programPath) {
     throw 'The firewall rule does not match the approved scope. Remove it and inspect the rule before proceeding.'

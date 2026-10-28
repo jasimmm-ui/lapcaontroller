@@ -1,0 +1,16 @@
+.env
+.git
+node_modules
+dist
+output
+tmp
+certs
+relay/data
+*.sqlite
+*.sqlite-*
+*.db
+*.pem
+*.key
+*.pfx
+*.cer
+*.crt

@@ -1,0 +1,25 @@
+# Render Blueprint: one free Node web service. This uses an ephemeral SQLite file;
+# see docs/SETUP-AND-DEPLOYMENT.md before relying on saved pairings.
+services:
+  - type: web
+    name: liquid-glass-remote-relay
+    runtime: node
+    region: singapore
+    plan: free
+    autoDeploy: true
+    buildCommand: npm ci --omit=dev
+    startCommand: node relay/index.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RELAY_HOST
+        value: 0.0.0.0
+      - key: RELAY_DB_PATH
+        value: /tmp/liquid-glass-relay.sqlite
+      - key: RELAY_PEPPER
+        generateValue: true
+      - key: FRONTEND_ORIGINS
+        value: https://lapcontroller.vercel.app
+      - key: TRUST_PROXY_HOPS
+        value: "1"

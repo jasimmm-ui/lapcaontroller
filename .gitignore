@@ -1,5 +1,7 @@
 node_modules/
 dist/
+output/
+tmp/
 .env
 *.key
 *.pem
@@ -7,3 +9,9 @@ dist/
 *.cer
 *.pfx
 certs/
+relay/data/
+receiver/identity.dpapi
+receiver/*.local.json
+*.sqlite
+*.sqlite-*
+*.db
