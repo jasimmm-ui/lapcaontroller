@@ -10,7 +10,7 @@ The frontend stays on Vercel. A separate HTTPS relay authenticates devices and f
 2. Open the receiver. It shows a three-digit, two-minute pairing code.
 3. Enter the code on the phone website.
 4. Approve the phone in the receiver window.
-5. Select the saved laptop on the phone in future sessions. The receiver starts again when the Windows user signs in and reconnects without pairing again.
+5. With relay data retained, select the saved laptop in future sessions. The receiver starts again when the Windows user signs in and reconnects without pairing again. Render Free can erase relay data after sleep or a restart, which forces pairing again.
 
 The laptop must be powered on, signed in, awake, and online. The pairing code only starts a request; the laptop user must approve the phone. Paired phones can be removed in the website or revoked in the receiver window.
 

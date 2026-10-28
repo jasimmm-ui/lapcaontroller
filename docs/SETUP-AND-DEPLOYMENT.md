@@ -114,13 +114,13 @@ Publish the finished installer as a GitHub Release asset after checking it. Do n
 5. In the receiver window on the laptop, confirm the phone name and type `approve`. Type `reject` if you did not initiate the request.
 6. After approval, the laptop appears in the phone's saved device list. Select it when it is online.
 
-The phone stores the paired credential encrypted in its browser profile. The laptop identity is protected by Windows DPAPI under the signed-in Windows account and survives normal receiver updates and Windows restarts. Clearing browser site data, using a different phone/browser profile, losing the Windows user profile, or choosing to delete the saved identity during uninstall can require pairing again.
+The phone stores the paired credential encrypted in its browser profile. The laptop identity is protected by Windows DPAPI under the signed-in Windows account and survives normal receiver updates and Windows restarts. Pairing also requires the relay database to remain durable: Render Free may erase its ephemeral database after sleep or restart, in which case you must pair again. Clearing browser site data, using a different phone/browser profile, losing the Windows user profile, or choosing to delete the saved identity during uninstall can also require pairing again.
 
 The receiver runs as the signed-in user so Windows can accept mouse, keyboard, and media actions. It is not installed as a Session 0 service. The laptop must be powered on, signed in, awake, and connected to the internet. It will not turn on a shut-down computer.
 
 ## 5. Use, reconnect, and revoke
 
-- On a later visit, open the website and select the saved laptop. No pairing code is required again after a normal restart.
+- On a later visit, open the website and select the saved laptop. With durable relay storage, no pairing code is required again after a normal Windows restart. On Render Free, relay sleep or restart can erase pairings.
 - If the laptop is offline, open its receiver or check that Windows is signed in, awake, and online. The receiver retries with increasing delays, capped at 30 seconds.
 - To pair another phone, type `pair` in the receiver window to get a fresh code. Approve each new phone at the laptop.
 - In the receiver window, type `phones` to list paired phone names and IDs. Revoke one with `revoke <phone-id>`.
