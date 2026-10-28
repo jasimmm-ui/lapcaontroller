@@ -6,7 +6,7 @@ test('mock receiver pairs, rejects invalid commands, recovers after restart, and
   const port = 18787; const base = `http://127.0.0.1:${port}`;
   let child; let output = '';
   async function start() {
-    child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, REMOTE_HOST:'127.0.0.1', REMOTE_PORT:String(port), ALLOWED_CIDR:'', MOCK_MODE:'true' }, stdio:['ignore','pipe','pipe'] });
+    child = spawn(process.execPath, ['server/index.js'], { env: { ...process.env, REMOTE_HOST:'127.0.0.1', REMOTE_PORT:String(port), ALLOWED_CIDR:'', ALLOWED_ORIGINS:'https://lapcontroller.vercel.app', MOCK_MODE:'true' }, stdio:['ignore','pipe','pipe'] });
     output = ''; child.stdout.on('data',d=>output+=d); child.stderr.on('data',d=>output+=d);
     const end=Date.now()+6000;
     while(Date.now()<end&&!output.includes('Pairing code')) { if(child.exitCode!==null) throw new Error(output); await new Promise(r=>setTimeout(r,50)); }
@@ -16,6 +16,7 @@ test('mock receiver pairs, rejects invalid commands, recovers after restart, and
   t.after(stop);
   const code=await start();
   const badOrigin=await fetch(`${base}/api/pair`,{method:'POST',headers:{'content-type':'application/json',origin:'https://attacker.example'},body:JSON.stringify({code})}); assert.equal(badOrigin.status,403);
+  const cors=await fetch(`${base}/api/pair`,{method:'OPTIONS',headers:{origin:'https://lapcontroller.vercel.app','access-control-request-method':'POST','access-control-request-headers':'content-type'}}); assert.equal(cors.status,204); assert.equal(cors.headers.get('access-control-allow-origin'),'https://lapcontroller.vercel.app');
   const denied=await fetch(`${base}/api/pair`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code:'00000000'})}); assert.equal(denied.status,401);
   const paired=await fetch(`${base}/api/pair`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({code})}); assert.equal(paired.status,200); const {token,mock}=await paired.json(); assert.equal(mock,true);
   const call=async body=>fetch(`${base}/api/command`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify(body)});

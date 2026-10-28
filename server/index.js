@@ -17,6 +17,7 @@ const port = Number(process.env.REMOTE_PORT || 8787);
 const mock = process.env.MOCK_MODE !== 'false';
 const lan = host !== '127.0.0.1' && host !== 'localhost';
 const cidr = process.env.ALLOWED_CIDR || '';
+const allowedOrigins = new Set((process.env.ALLOWED_ORIGINS || '').split(',').map(origin => origin.trim()).filter(Boolean));
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('REMOTE_PORT must be between 1024 and 65535.');
 if (lan && (!isPrivateIPv4(host) || !(process.env.TLS_PFX || (process.env.TLS_CERT && process.env.TLS_KEY)) || !cidr)) throw new Error('LAN mode requires a private IPv4 REMOTE_HOST, ALLOWED_CIDR, and a TLS PFX or certificate/key pair. See README.md.');
 if (cidr && !inCidr(host, cidr)) throw new Error('REMOTE_HOST must be inside ALLOWED_CIDR.');
@@ -42,12 +43,13 @@ app.use((req,res,next) => {
     try {
       const u = new URL(origin); const hostHeader = req.headers.host;
       const isDevLoopback = !lan && u.port === '5173' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost') && (hostHeader?.startsWith('127.0.0.1:') || hostHeader?.startsWith('localhost:'));
-      if (lan && (u.hostname !== host || u.port !== String(port))) return res.status(403).json({ error: 'Origin does not match the configured receiver address.' });
-      if (u.host !== hostHeader && !isDevLoopback) return res.status(403).json({ error: 'Origin does not match receiver host.' });
+      const isConfiguredOrigin = allowedOrigins.has(origin);
+      if (lan && !isConfiguredOrigin && (u.hostname !== host || u.port !== String(port))) return res.status(403).json({ error: 'Origin does not match the configured receiver address.' });
+      if (u.host !== hostHeader && !isDevLoopback && !isConfiguredOrigin) return res.status(403).json({ error: 'Origin does not match receiver host.' });
       if (lan && u.protocol !== 'https:') return res.status(403).json({ error: 'HTTPS is required.' });
-      if (isDevLoopback) {
+      if (isDevLoopback || isConfiguredOrigin) {
         res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary','Origin');
-        res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
+        res.setHeader('Access-Control-Allow-Methods','GET, POST, DELETE, OPTIONS'); res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
       }
     } catch { return res.status(403).json({ error: 'Invalid request origin.' }); }
   }

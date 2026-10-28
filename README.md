@@ -44,6 +44,10 @@ Use a narrow `ALLOWED_CIDR` and avoid guest Wi-Fi and networks you do not contro
 
 Open the receiver's HTTPS URL in Chrome on Android, pair, then use **Add to Home screen** from the browser menu. Static UI files only are eligible for service-worker caching; `/api/` endpoints are never cached. Offline use cannot control the laptop. Reconnect by reloading the page and pairing again after a receiver restart.
 
+### Using a separately hosted Vercel UI
+
+The Vercel deployment serves only the React interface; the authenticated Windows receiver still runs on the laptop. In the phone UI, enter `https://<laptop-ip>:8787` as the receiver URL. Add the exact Vercel origin (for example, `https://your-project.vercel.app`) to `ALLOWED_ORIGINS` in the laptop's `.env`, then restart the receiver. The receiver grants CORS only to the configured origin, never to `*`. Chrome may ask the Vercel site for Local Network Access permission before it can contact the laptop; allow it only for your own deployment. The phone must also trust the receiver's HTTPS certificate.
+
 ## Features and limits
 
 - Touchpad movement, tap/double-tap, right click, and two-finger scroll; browser gestures are suppressed only inside the touch surface.
