@@ -14,6 +14,8 @@
     "relay:start": "node relay/index.js",
     "build:windows-stage": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -StageOnly",
     "build:windows-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
+    "cf:dev": "wrangler dev --config cloudflare/wrangler.jsonc",
+    "cf:deploy": "wrangler deploy --config cloudflare/wrangler.jsonc",
     "test": "node --test"
   },
   "engines": {
@@ -29,6 +31,7 @@
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.0",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "wrangler": "^4.154.0"
   }
 }

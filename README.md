@@ -10,14 +10,16 @@ The frontend stays on Vercel. A separate HTTPS relay authenticates devices and f
 2. Open the receiver. It shows a three-digit, two-minute pairing code.
 3. Enter the code on the phone website.
 4. Approve the phone in the receiver window.
-5. With relay data retained, select the saved laptop in future sessions. The receiver starts again when the Windows user signs in and reconnects without pairing again. Render Free can erase relay data after sleep or a restart, which forces pairing again.
+5. Select the saved laptop in future sessions. The receiver starts again when Windows signs in. Authorized phone associations and revocation history live in Supabase Postgres; live WebSocket routing uses Cloudflare Durable Objects.
 
 The laptop must be powered on, signed in, awake, and online. The pairing code only starts a request; the laptop user must approve the phone. Paired phones can be removed in the website or revoked in the receiver window.
 
 ## Project parts
 
 - `src/` - React/Vite interface. Existing touchpad, keyboard, media, volume, and built-in app controls are retained.
-- `relay/` - HTTPS Express relay, SQLite storage, WebSocket heartbeat endpoints, code exchange, presence, and bounded command forwarding.
+- `cloudflare/` - Cloudflare Worker and SQLite-backed Durable Object for HTTPS APIs and real-time WebSocket routing.
+- `supabase/migrations/` - Postgres schema and restricted server-side functions for durable phone associations and revocation history.
+- `relay/` - Local development Express relay and SQLite store.
 - `receiver/` - Outbound relay client, Windows DPAPI identity storage, console approval/status, WebSocket heartbeat, and crash-restarting launcher.
 - `server/windows.js` and `server/validation.js` - Same-user-session Windows input worker and the shared strict action allowlist.
 - `installer/` and `scripts/package-windows.ps1` - Per-user Inno Setup installer staging and build configuration.
@@ -51,14 +53,12 @@ The automated tests cover code expiry and reuse, attempt limits, explicit approv
 
 ## Production setup
 
-Deploy the relay as a single always-on Node container with a persistent disk mounted at `/data`, terminate public HTTPS at a trusted host/reverse proxy, set the Vercel `VITE_RELAY_URL`, then build the Windows installer with that relay URL. See the deployment guide for exact environment variables and commands.
-
-The repository includes `render.yaml` for a Render **Free** web service with platform HTTPS. This is ₹0 within Render's quotas, but its SQLite path is ephemeral: Render can erase the database when the free service sleeps, restarts, or redeploys. Existing phone pairings then need to be created again. Render Free can also cold-start in about a minute, restart during maintenance, and suspend free services when the workspace's 750 monthly free instance-hours are exhausted. The heartbeat is intended to keep the service awake while the receiver is connected; it cannot guarantee uptime when the laptop or network is offline. Render Free therefore does not meet the durable, always-available pairing requirement by itself. The exact free-tier limits and the durable-storage alternatives are documented in [the setup guide](docs/SETUP-AND-DEPLOYMENT.md).
+Deploy the relay as a Cloudflare Worker with a SQLite Durable Object and connect it to a Supabase Free Postgres project. Apply the migration, store both secrets in Cloudflare, set `VITE_RELAY_URL` in the existing Vercel project, then build the Windows installer. See the guide for exact steps and free-tier limitations.
 
 ## Security notes
 
 - The three-digit code expires after two minutes and is single-use. A laptop user must approve each phone.
-- Relay-side receiver, phone, and code credentials are stored as keyed hashes. The relay pepper must stay secret and stable across deploys.
+- The Worker stores receiver/code credentials as keyed hashes in Durable Object SQLite. Supabase stores keyed phone-token hashes and append-only revocation events. The relay pepper and Supabase service-role key are Cloudflare secrets only.
 - Windows receiver identity is protected with the current Windows user's DPAPI. The phone stores its device token encrypted with Web Crypto in IndexedDB.
 - Relay and receiver both validate a closed command schema. No shell, PowerShell, arbitrary app launch, screen streaming, microphone, camera, or file transfer is exposed.
 - The receiver runs in the signed-in user's session rather than Windows Session 0, so mouse and keyboard actions can reach that user's desktop.
@@ -67,4 +67,4 @@ The repository includes `render.yaml` for a Render **Free** web service with pla
 
 ## Current deployment state
 
-The code in this workspace has not yet been deployed to Render or Vercel. The website needs `VITE_RELAY_URL` set in Vercel and a redeploy before it can connect. Build the Windows installer with the open-source Inno Setup 6 compiler; the installer is unsigned and may show an unknown-publisher warning.
+The website is already hosted at `https://lapcontroller.vercel.app/`, but this updated relay has not yet been deployed or configured in Vercel. The site needs `VITE_RELAY_URL` set to the deployed `workers.dev` URL and a redeploy. Supabase Free can pause after a week with low activity; the stored associations remain, but API access is interrupted until resumed. Cloudflare free quotas and service interruptions can also interrupt control. Build the Windows installer with the open-source Inno Setup 6 compiler; the installer is unsigned and may show an unknown-publisher warning.

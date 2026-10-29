@@ -1,183 +1,136 @@
-# Liquid Glass Remote: installation and deployment
+# Liquid Glass Remote: Cloudflare + Supabase setup
 
-This guide covers the relay-based version, including an optional ₹0 Render free-tier setup. The Windows laptop connects outward over HTTPS. The phone and laptop can be on different Wi-Fi networks. You do not install certificates on Android or open an inbound laptop firewall port.
+This guide deploys the relay for ₹0 using Cloudflare Workers Free and Supabase Free, within their quotas. The React website remains on Vercel. The Windows receiver remains a separate app. No Render, paid database, paid relay, custom domain, or billing upgrade is required.
 
-## What you need
+## What is durable and what can pause
 
-- The project in GitHub and access to its Vercel project.
-- A Render account for the free web-service option, or another relay host.
-- Node.js 22.13 or newer and the open-source Inno Setup 6 compiler on the build computer.
-- An Android phone and the Windows 11 laptop you want to pair.
+- Supabase Postgres holds approved phone associations and an append-only revocation history. Only the Cloudflare Worker uses its service-role key. The browser and receiver never receive that key.
+- Cloudflare Durable Object SQLite holds receiver registrations, short-lived pairing codes/requests, and rate limits. It survives Worker restarts and deploys. WebSockets carry live receiver/phone traffic and hibernate when idle.
+- Cloudflare provides HTTPS/WSS on the free `workers.dev` address. The phone and receiver reconnect after interruptions; that does not guarantee uninterrupted availability.
+- Supabase Free has 500 MB database storage and 5 GB egress; a project with too little activity over a week can be paused. Data remains, but the relay cannot validate phone credentials until you resume the project in Supabase. Do not upgrade to prevent pausing.
+- Cloudflare Workers Free allows 100,000 Worker requests/day. SQLite Durable Objects have free daily request/compute/storage quotas. If quotas are exceeded, requests may fail until reset. Do not enable paid billing or a paid plan.
+- Free plans do not provide a production uptime guarantee, automatic Supabase database backups, or always-on database availability. For sensitive or irreplaceable associations, export a backup from Supabase periodically. If you need guaranteed availability/backups, that cannot be promised at ₹0 with these plans.
 
-The relay is separate from Vercel. The Render blueprint in this repository selects the **Free** service plan and uses Render-provided HTTPS. This keeps the hosting cost at ₹0 while within free quotas; it does not guarantee availability or durable storage. Do not select a paid plan, add a payment method, or enable a paid resource as part of this setup.
+## 1. Create the Supabase Free project
 
-## 1. Deploy the relay on Render Free
+1. Sign in at [Supabase](https://supabase.com/dashboard/) with your GitHub account.
+2. Create a new organization only if Supabase asks for one. Select the Free plan.
+3. Create a project. Pick a region near you, a project name, and a strong database password. Keep the password in a password manager; it is not used by the phone or receiver.
+4. Confirm the project is on **Free** and do not add a paid compute add-on, custom domain, or billing upgrade.
+5. Open **SQL Editor > New query**. Open `supabase/migrations/20261028000000_device_associations.sql` in this repository, copy all of its contents into the SQL Editor, and run it.
+6. Open **Project Settings > API** (or **API Keys**). Copy the Project URL and the `service_role` secret key. Treat the service-role key like a password. Never put it in Vercel, source files, chat, or the Windows receiver. It will be entered directly into a Cloudflare secret in Step 3.
 
-1. Push this project to the GitHub repository connected to your Render account (or connect it from the Render dashboard).
-2. In Render, choose **New > Blueprint**, select this repository, and review `render.yaml`.
-3. Before applying, confirm the service says **Free** and the blueprint contains only the `liquid-glass-remote-relay` web service. Do not choose an upgrade or add a paid disk/database.
-4. Create the Blueprint. Render generates `RELAY_PEPPER`; keep the generated value unchanged. Wait for the service to finish deploying.
-5. Copy its `https://...onrender.com` address and check that `/healthz` returns `{"ok":true}`.
+The migration enables row-level security, denies browser roles access to both tables, and permits the private Worker key to call only the two association functions. Phone tokens are stored as keyed hashes; revocation events remain recorded after the phone is removed and later paired again.
 
-Render provides HTTPS for its `onrender.com` service address. The receiver and browser use secure WebSockets with two-way heartbeats and reconnect with backoff. A running receiver sends a heartbeat every 20 seconds; it normally keeps the free service awake while the laptop is online.
+## 2. Sign in to Cloudflare and configure the Worker
 
-### Free-tier limits you need to know
-
-- Render Free services sleep after 15 minutes without incoming HTTP requests or WebSocket messages. A sleeping service takes about a minute to start when next contacted. It can restart for platform maintenance at any time.
-- The SQLite file for this blueprint lives on Render's **ephemeral filesystem**. Render deletes that file when the service sleeps, restarts, or redeploys. If it is deleted, saved relay registrations and phone pairings are lost; you will need to pair again. The receiver's DPAPI identity and the phone's encrypted browser token remain on those devices, but they will no longer be recognized by the empty relay database.
-- Render does not offer a persistent disk on a Free web service. Its Free Postgres expires after 30 days, and its Free Key Value data is in-memory and can be lost on restart. Those are not durable substitutes for this setup.
-- Free web services share a 750-hour monthly allowance in a workspace. One service kept awake for a 31-day month can use up to 744 hours; any other free services in the same workspace use part of that allowance. If the allowance runs out, Render suspends free services until the next month.
-- Therefore this Render Free configuration costs ₹0 within the quota, but **does not guarantee always-on access or pairing persistence after relay sleep/restart**. It is suitable for a zero-cost trial, not a reliable permanent pairing service.
-
-To retain pairings at ₹0, the relay needs a separate free database with durable storage and a compatible adapter. Upstash Redis currently lists a free tier with fixed request, data, and bandwidth quotas; it is not wired into this relay yet. If you use it later, stay on its Free plan and do not add a payment method: Upstash says adding a payment method switches all free resources on that account to Pay-as-You-Go. The zero-cost alternative that works today is self-hosting the relay and SQLite on a computer or server with durable storage that you already own, but it is available only while that host and internet connection are running.
-
-## 2. Configure the Vercel website
-
-In Vercel, open the existing Liquid Glass Remote project and set this environment variable for Production:
-
-```text
-VITE_RELAY_URL=https://your-render-service.onrender.com
-```
-
-Use the Render origin only, with no trailing slash. Then redeploy Vercel. The relay allows `https://lapcontroller.vercel.app` through `FRONTEND_ORIGINS` in `render.yaml`.
-
-The website link is `https://lapcontroller.vercel.app/`. It will not connect to a relay until this environment value is deployed.
-
-## Alternative: self-host with Docker and durable storage
-
-The included Docker Compose setup listens on `127.0.0.1:8788` on the relay host and stores its SQLite database in the persistent Docker volume `relay-data`. This is durable only if the host's disk and Docker volume are durable and the host remains available. Put a trusted HTTPS reverse proxy in front and route the relay domain to that local port. Keep the direct container port private; only the HTTPS proxy should be publicly reachable. This path may have hosting or domain costs; check before provisioning anything.
-
-On a clean checkout, create the local environment file:
+From PowerShell in the repository folder:
 
 ```powershell
-Copy-Item .env.example .env
+npm install
+npx wrangler login
 ```
 
-Do not overwrite an existing `.env`; add the new relay entries to it instead. Generate the relay pepper on the relay host or in a trusted password manager. In PowerShell, this command prints a random value:
+A browser tab opens for Cloudflare authorization. Complete that sign-in yourself if asked. The CLI is the open-source Wrangler tool. Keep the Cloudflare account on the **Workers Free** plan; do not add a paid subscription or turn on billing.
+
+Generate a random relay pepper locally (it is a secret; do not send it to anyone):
 
 ```powershell
 node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
 ```
 
-Set these values in the relay deployment environment (or the relay host's private `.env` file):
-
-| Variable | Value |
-|---|---|
-| `RELAY_PEPPER` | The generated random value. Keep it secret and unchanged between deploys. |
-| `FRONTEND_ORIGINS` | `https://lapcontroller.vercel.app` (no trailing slash). Add a local development origin only if needed. |
-| `TRUST_PROXY_HOPS` | `1` only when one trusted HTTPS proxy is in front of the relay. Use the correct count for your host. |
-| `RELAY_DB_PATH` | `/data/relay.sqlite` in the container. |
-
-`relay/compose.yaml` supplies the other container settings. From the repository root, start it with:
+Store the pepper as a Cloudflare Worker secret:
 
 ```powershell
-docker compose -f relay/compose.yaml up -d --build
-docker compose -f relay/compose.yaml logs -f relay
+npx wrangler secret put RELAY_PEPPER --config cloudflare/wrangler.jsonc
 ```
 
-Configure the proxy to present HTTPS for your relay domain and route requests to `http://127.0.0.1:8788`. Check `https://your-relay-domain/healthz` returns `{"ok":true}`. Do not place the pepper in Vercel or in the frontend.
-
-The Docker volume must survive container recreation. Back up the SQLite file and preserve the same pepper. If the database or pepper is lost, existing phone/laptop pairings cannot authenticate.
-
-## 3. Build the Windows installer
-
-On the build computer, install Node.js 22.13 or newer. Set `RELAY_URL` to the deployed HTTPS relay address and run:
+Paste the generated value into the CLI prompt. Then add the Supabase URL and service-role key as Worker secrets. Replace the URL with the Project URL from Step 1:
 
 ```powershell
-$env:RELAY_URL = 'https://your-relay-domain'
-npm install
+npx wrangler secret put SUPABASE_URL --config cloudflare/wrangler.jsonc
+npx wrangler secret put SUPABASE_SERVICE_ROLE_KEY --config cloudflare/wrangler.jsonc
+```
+
+Paste each value only into its corresponding prompt. Wrangler encrypts secrets for the Worker. These values are not part of `wrangler.jsonc` or Vercel's environment.
+
+Deploy the Worker and its Durable Object migration:
+
+```powershell
+npm run cf:deploy
+```
+
+The first deploy prints an HTTPS URL like `https://liquid-glass-remote-relay.<your-account>.workers.dev`. Save that exact origin. Confirm `https://...workers.dev/healthz` shows `{"ok":true,"configured":true}`. This checks that the Worker bindings and secrets exist; it does not test Supabase database availability or detect a paused Supabase project. If you see a billing, Workers Paid, or paid resource prompt, stop and do not accept it.
+
+For local development, copy `cloudflare/.dev.vars.example` to `cloudflare/.dev.vars`, fill it with test secrets, and run `npm run cf:dev`. Do not commit `.dev.vars`.
+
+## 3. Point Vercel at the relay
+
+1. In the Vercel project for `lapcontroller.vercel.app`, open **Settings > Environment Variables**.
+2. Add `VITE_RELAY_URL` with the exact `https://...workers.dev` origin from Step 2. Do not add a trailing slash or any secret.
+3. Apply it to Production and redeploy the project.
+4. Open [https://lapcontroller.vercel.app/](https://lapcontroller.vercel.app/) and check that the site loads without a relay configuration error.
+
+The Worker allows that exact site origin by default. If you use another frontend URL, update `FRONTEND_ORIGINS` in `cloudflare/wrangler.jsonc` before deploying.
+
+## 4. Build the Windows installer
+
+On the build computer, install Node.js 22.13 or newer and the free/open-source Inno Setup 6 compiler. In PowerShell, set the public relay origin and build:
+
+```powershell
+$env:RELAY_URL = 'https://liquid-glass-remote-relay.<your-account>.workers.dev'
 npm run build:windows-installer
 ```
 
-The installer is written to:
+The installer is created at `dist\installer\LiquidGlassRemoteSetup.exe`. It contains the receiver and Node runtime, but no Supabase key or Cloudflare secret. It is unsigned, so Windows may show an unknown-publisher prompt. Check the relay URL in the installer build command before sharing the file.
 
-```text
-dist\installer\LiquidGlassRemoteSetup.exe
-```
+## 5. Install and pair each Windows laptop
 
-The staging files are under `dist\windows\`. To prepare and inspect the stage without Inno Setup:
+1. Run the installer on the Windows laptop and choose the sign-in startup option.
+2. Open the receiver. It connects outward using HTTPS/WSS, creates its own secure identity, and displays a temporary three-digit code. No inbound firewall rule, certificate installation, or router port-forward is needed.
+3. On the phone, open `https://lapcontroller.vercel.app/` and enter that code before it expires (two minutes, one use).
+4. Read the phone name shown in the receiver window. Type `approve` only if you initiated that pairing; otherwise type `reject`.
+5. After approval, the phone is saved in its browser. Reopen the site and select it next time; pairing survives Windows/receiver/Worker restarts.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-windows.ps1 -StageOnly -RelayUrl 'https://your-relay-domain'
-```
+The laptop must be powered on, awake, signed in to the same Windows user, and online. The receiver retries automatically after interruptions. A sleeping or shut-down laptop cannot be controlled.
 
-The installer includes the Node runtime, so the laptop user does not need to install Node.js. It installs per-user, starts the receiver at sign-in, and does not need administrator access. It is unsigned; Windows may show an unknown-publisher warning.
+## 6. Remove a phone or revoke access
 
-Publish the finished installer as a GitHub Release asset after checking it. Do not distribute staging files or a build configured with a placeholder relay URL.
+On the phone website, use **Remove** for that laptop, or in the Windows receiver window type `phones`, then `revoke <phone-id>`. Either route revokes the credential in Supabase and appends a permanent revocation record. If a phone is lost, revoke it from the laptop receiver. Do not delete the Supabase revocation table or association history.
 
-## 4. Install and pair a laptop
+## 7. Verify, test, and troubleshoot
 
-1. Download and run `LiquidGlassRemoteSetup.exe` on the laptop. Choose the sign-in startup option.
-2. Let the receiver open. Keep its console window available; it shows online/offline status and a three-digit code that expires after two minutes.
-3. On the Android phone, open `https://lapcontroller.vercel.app/` in Chrome.
-4. Enter the three-digit code. The code only identifies the request; it does not authorize control by itself.
-5. In the receiver window on the laptop, confirm the phone name and type `approve`. Type `reject` if you did not initiate the request.
-6. After approval, the laptop appears in the phone's saved device list. Select it when it is online.
-
-The phone stores the paired credential encrypted in its browser profile. The laptop identity is protected by Windows DPAPI under the signed-in Windows account and survives normal receiver updates and Windows restarts. Pairing also requires the relay database to remain durable: Render Free may erase its ephemeral database after sleep or restart, in which case you must pair again. Clearing browser site data, using a different phone/browser profile, losing the Windows user profile, or choosing to delete the saved identity during uninstall can also require pairing again.
-
-The receiver runs as the signed-in user so Windows can accept mouse, keyboard, and media actions. It is not installed as a Session 0 service. The laptop must be powered on, signed in, awake, and connected to the internet. It will not turn on a shut-down computer.
-
-## 5. Use, reconnect, and revoke
-
-- On a later visit, open the website and select the saved laptop. With durable relay storage, no pairing code is required again after a normal Windows restart. On Render Free, relay sleep or restart can erase pairings.
-- If the laptop is offline, open its receiver or check that Windows is signed in, awake, and online. The receiver retries with increasing delays, capped at 30 seconds.
-- To pair another phone, type `pair` in the receiver window to get a fresh code. Approve each new phone at the laptop.
-- In the receiver window, type `phones` to list paired phone names and IDs. Revoke one with `revoke <phone-id>`.
-- On a phone you still have, choose **Remove** beside the saved laptop to revoke that phone's credential and remove the local entry.
-- To stop the receiver, type `quit` or close its console. It starts again at the next Windows sign-in if the startup option is enabled.
-- Uninstall from Windows Settings > Apps. The uninstaller asks whether to remove the saved laptop identity and app data. Removing it means this laptop will register as a new device if installed again.
-
-## Environment variables
-
-| Variable | Used by | Purpose |
-|---|---|---|
-| `RELAY_URL` | Receiver | HTTPS relay origin. Localhost HTTP is allowed for development only. |
-| `MOCK_MODE` | Receiver | `true` disables real Windows input; `false` enables it after pairing approval. Development defaults to mock. |
-| `PORT` | Relay | Internal HTTP port behind the TLS proxy; default `8788`. |
-| `RELAY_HOST` | Relay | Bind address; Docker uses `0.0.0.0` inside the container. |
-| `RELAY_DB_PATH` | Relay | SQLite file path. On Render Free it is ephemeral and can be erased; on Docker use `/data/relay.sqlite` on a persistent volume. |
-| `RELAY_PEPPER` | Relay | Stable secret used to HMAC credentials, code, and rate-limit keys. Minimum 32 bytes. |
-| `FRONTEND_ORIGINS` | Relay | Exact allowed browser origins, comma-separated. Never use `*`. |
-| `TRUST_PROXY_HOPS` | Relay | Number of trusted proxies, used to determine client IP for rate limiting. |
-| `VITE_RELAY_URL` | Vercel build | Public HTTPS relay origin embedded in the frontend. It is not a secret. |
-
-The relay uses one SQLite writer and should run as one instance. It stores keyed hashes rather than raw phone/receiver credentials. Commands pass through relay memory and are removed after completion or timeout. Render Free local files are ephemeral, so pairing data can disappear as described above.
-
-## Local development and checks
-
-Start a local relay and Vite frontend with the `.env.example` development values:
-
-```powershell
-npm install
-npm run dev:all
-```
-
-Then start the receiver in another terminal:
-
-```powershell
-npm run dev:receiver
-```
-
-The example uses mock mode. To run checks:
+Run local tests and the website build from the repository:
 
 ```powershell
 npm test
 npm run build
 ```
 
-Automated checks do not prove the public relay host is correctly configured, that Android Chrome can connect over a real mobile network, that the Vercel environment was redeployed, that the installer is signed, or that an actual Windows restart was completed. Those checks require the deployed relay, Android phone, and installed receiver.
+When Wrangler is installed, check the Worker bundle without deploying:
 
-## Troubleshooting
+```powershell
+npx wrangler deploy --dry-run --config cloudflare/wrangler.jsonc
+```
 
-- **Pairing code rejected:** type `pair` in the laptop receiver window and use the new code promptly. Codes are one-use and expire after two minutes. Too many guesses are blocked for one minute.
-- **Phone request stays waiting:** make sure the receiver window is open and the laptop is online, then check that the laptop owner approved the pending request.
-- **Laptop offline after reboot:** sign in to the same Windows user account and check that the installer startup option was enabled. Receiver actions need the interactive user session.
-- **Relay does not start:** check `RELAY_PEPPER` length and stability, database volume write access, and that only one relay instance is using the SQLite file.
-- **Website says relay is not set up:** set `VITE_RELAY_URL` in Vercel and redeploy.
-- **Browser says network error:** confirm relay HTTPS certificate validity, `FRONTEND_ORIGINS`, proxy routing to port 8788, and proxy request timeout. The laptop itself does not need a public inbound port.
-- **Phone says access revoked:** remove the stale device entry and pair again only if the laptop owner intends to grant access.
+- **The site cannot connect:** check that Vercel has the correct `VITE_RELAY_URL` and was redeployed.
+- **Worker says relay is not configured:** set all three Cloudflare secrets: `RELAY_PEPPER`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY`.
+- **Supabase responds with errors:** check that the migration ran successfully, the URL is the project URL ending in `.supabase.co`, and the key is the server-side `service_role` key.
+- **Supabase project is paused:** in the Supabase dashboard, resume it. Pairings remain stored; access returns after the project is active.
+- **Pairing code is invalid:** generate a fresh code in the receiver (`pair`) and enter it within two minutes. There are strict per-IP attempt limits.
+- **Laptop appears offline:** sign in to Windows, open the receiver, and confirm its internet connection. The receiver retries with backoff; Cloudflare and Supabase free-tier limits or maintenance can still interrupt control.
+- **A quota is reached:** wait for the free quota to reset or lower request frequency. Do not enable paid billing. Stored Supabase associations remain durable if the database is active, but the service may temporarily be unavailable.
 
-## Legacy direct-Wi-Fi receiver
+## Environment and secret boundaries
 
-The previous receiver remains available as `npm run start:legacy`. It listens directly on the laptop and still needs the old LAN certificate, Android CA trust, same Wi-Fi, and Windows firewall configuration. The new installer does not use this legacy path.
+| Value | Location | Secret? |
+|---|---|---|
+| `VITE_RELAY_URL` | Vercel frontend build | No; public HTTPS origin |
+| `FRONTEND_ORIGINS` | `cloudflare/wrangler.jsonc` | No; website origin allowlist |
+| `RELAY_PEPPER` | Cloudflare Worker secret | Yes; HMAC key for receiver/pair credentials |
+| `SUPABASE_URL` | Cloudflare Worker secret | Configuration value; used only server-side |
+| `SUPABASE_SERVICE_ROLE_KEY` | Cloudflare Worker secret | Yes; privileged database credential; never expose to browser/receiver |
+| `RELAY_URL` | Windows installer build only | No; public HTTPS origin embedded in installer |
+| `MOCK_MODE` | Receiver config | No; `false` enables allowed Windows input after pairing |
+
+The receiver accepts only the predefined mouse, keyboard, media, volume, and built-in app actions. It does not run arbitrary shell commands or PowerShell. The phone and receiver credentials are revocable; the Supabase service-role key is never sent to either client.

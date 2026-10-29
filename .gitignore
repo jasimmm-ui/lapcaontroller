@@ -15,3 +15,5 @@ receiver/*.local.json
 *.sqlite
 *.sqlite-*
 *.db
+cloudflare/.dev.vars
+cloudflare/.wrangler/

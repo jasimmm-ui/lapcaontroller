@@ -87,7 +87,11 @@ async function websocketHeartbeatLoop() {
           beat();
           timer = setInterval(beat, 20_000);
           timer.unref?.();
+          return;
         }
+        if (!authenticated) return;
+        if (message.type === 'pair_request' && message.pair && typeof message.pair.id === 'string') receivePairs([message.pair]);
+        else if (message.type === 'command' && typeof message.id === 'string' && message.command && typeof message.command === 'object') void executeQueued({ id: message.id, ...message.command });
       });
       socket.addEventListener('error', () => {});
       socket.addEventListener('close', () => {
